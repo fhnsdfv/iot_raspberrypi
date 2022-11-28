@@ -1,0 +1,73 @@
+function doGet(e) {
+  var date=new Date
+  var sheet_exist=false;
+  var sheet_index=-1;
+  var Curr_Time = Utilities.formatDate(date, "Asia/Jakarta", 'HH:mm:ss');
+  var sheet_id = '1x7WLm7B3yyI-Gr1RqjTotfqBgw-01y_1a6Ps18c1Cx0'; 	// Spreadsheet ID
+  var spread_sheet = SpreadsheetApp.openById(sheet_id);
+  var ds_sheet = spread_sheet.getSheets();
+  var Curr_Date = Utilities.formatDate(date, "Asia/Jakarta", 'dd/MM/yyyy');
+  Logger.log(Curr_Date)
+  Logger.log(Curr_Time)
+  for (var i=0;i<ds_sheet.length;i++)
+  {
+    if (Curr_Date.toString()==ds_sheet[i].getName())
+    {
+      sheet_exist=true;
+      sheet_index=i;
+    }
+  }
+  if (sheet_exist==true)
+  {
+    var cur_sheet=spread_sheet.setActiveSheet(ds_sheet[sheet_index]);
+  }
+  else
+  {
+    var cur_sheet=spread_sheet.setActiveSheet(ds_sheet[ds_sheet.length-1])
+    var new_sheet=spread_sheet.insertSheet()
+    new_sheet.setName(Curr_Date.toString())
+    ds_sheet=spread_sheet.getSheets()
+    cur_sheet=spread_sheet.setActiveSheet(ds_sheet[ds_sheet.length-1])
+  }
+  Logger.log(cur_sheet.getName())
+  Logger.log( JSON.stringify(e) );
+  var result = 'Ok';
+  if (e == 'undefined') {
+    result = 'No Parameters';
+  }
+  else {
+    var newRow = cur_sheet.getLastRow() + 1;						
+    var rowData = [];
+    var Curr_Date = new Date();
+    //rowData[0] = Curr_Date; // Date in column A
+    var Curr_Time = Utilities.formatDate(Curr_Date, "Asia/Jakarta", 'HH:mm:ss');
+    rowData[0] = Curr_Time; // Time in column B
+    for (var param in e.parameter) {
+      Logger.log('In for loop, param=' + param);
+      var value = stripQuotes(e.parameter[param]);
+      Logger.log(param + ':' + e.parameter[param]);
+      switch (param) {
+        case 'temperature':
+          rowData[1] = value; // Temperature in column B
+          result = 'Temperature Written on column B'; 
+          break;
+        case 'humidity':
+          rowData[2] = value; // Humidity in column C
+          result += ' ,Humidity Written on column C'; 
+          break;
+        case 'rain':
+          rowData[3] = value; // Rain in column D
+          result += ' ,Rain Written on column D';  
+        default:
+          result = "unsupported parameter";
+      }
+    }
+    Logger.log(JSON.stringify(rowData));
+    var newRange = cur_sheet.getRange(newRow, 1, 1, rowData.length);
+    newRange.setValues([rowData]);
+  }
+  return ContentService.createTextOutput(result);
+}
+function stripQuotes( value ) {
+  return value.replace(/^["']|['"]$/g, "");
+}

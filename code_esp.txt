@@ -1,0 +1,216 @@
+#include <ESP8266WiFi.h> //thư viện wifi
+#include <WiFiClientSecure.h> // thư viện gửi dữ liệu lên google sheet
+#include <ThingerESP8266.h> // thư viện gửi dữ liệu lên web
+#include <Wire.h>
+//----------------------------------------
+#define ON_Board_LED 2  //--> Defining an On Board LED, used for indicators when the process of connecting to a wifi router
+#define USERNAME "huynh123456" //thiết lập web
+#define DEVICE_ID "esp8266"
+#define DEVICE_CREDENTIAL "3C+pGIH1rw8$2_2W"
+#define state_relay D3
+//----------------------------------------SSID and Password of your WiFi router.
+const char* ssid = "Tenda_013D50"; //--> Your wifi name or SSID.
+const char* password = "123456abc"; //--> Your wifi password.
+
+ThingerESP8266 thing(USERNAME, DEVICE_ID, DEVICE_CREDENTIAL);
+//----------------------------------------
+float tem = 0;
+float hum = 0;
+float rain = 0;
+int dv1 = 0;
+unsigned long preMillis = 0;  
+const long interval = 60000; // time delay to send data
+const long Time_led = 100; // time delay blink led
+int pre_state = 0;
+//----------------------------------------Host & httpsPort
+const char* host = "script.google.com";
+const int httpsPort = 443;
+//----------------------------------------
+String DataRec = "";
+String DataSend = "";
+//----------------------------------------
+WiFiClientSecure client; //--> Create a WiFiClientSecure object.
+String GAS_ID = "AKfycbyZm-HqzncLSz71uCf-gy9mZeV25obucUuwROyZ1JuOeIi41jBhDzug72ITGsSGX4wU"; //--> spreadsheet script ID
+//============================================================================== void setup
+void setup() {
+  // put your setup code here, to run once:
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(state_relay, OUTPUT);
+  digitalWrite(state_relay,LOW);
+  Wire.begin(D1, D2); /* join i2c bus with SDA=D1 and SCL=D2 of NodeMCU */
+  Serial.begin(115200);
+  WiFi.begin(ssid, password); //--> Connect to your WiFi router
+  Serial.println("");
+  pinMode(ON_Board_LED,OUTPUT); //--> On Board LED port Direction output
+  digitalWrite(ON_Board_LED, HIGH); //--> Turn off Led On Board
+
+  //----------------------------------------Wait for connection
+  Serial.print("Connecting");
+  while (WiFi.status() != WL_CONNECTED) {
+    unsigned long currentMillis = millis();
+    Serial.print(".");
+    delay(100);
+    //----------------------------------------Make the On Board Flashing LED on the process of connecting to the wifi router.
+    if(currentMillis - preMillis >= Time_led)
+    {
+      if (digitalRead(ON_Board_LED)== LOW)
+        digitalWrite(ON_Board_LED, HIGH);
+      else
+        digitalWrite(ON_Board_LED, LOW);
+      preMillis = currentMillis;
+    }
+    //----------------------------------------
+  }
+  //----------------------------------------
+  digitalWrite(ON_Board_LED, HIGH); //--> Turn off the On Board LED when it is connected to the wifi router.
+  //----------------------------------------If successfully connected to the wifi router, the IP Address that will be visited is displayed in the serial monitor
+  Serial.println("");
+  Serial.print("Successfully connected to : ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+  //----------------------------------------
+  client.setInsecure();
+  //gửi dữ liệu lên web
+  thing["device_1"] << digitalPin(state_relay);
+  thing["millis"] >> outputValue(millis());
+  thing["dht11"] >> [](pson& out){
+    out["dht11_tem"] = tem;
+    out["dht11_hum"] = hum;
+    out["dht11_rain"] = rain;
+  };
+}
+//============================================================================== void loop
+void loop() 
+{
+  unsigned long currentMillis = millis();
+  SendData();
+  RecData();
+  if (DataRec.startsWith("A")) //phân tích dữ liệu
+  {
+    String nhiet_do = DataRec.substring(DataRec.indexOf("A")+1,DataRec.indexOf("B"));
+    String do_am = DataRec.substring(DataRec.indexOf("B")+1,DataRec.indexOf("C"));
+    String mua = DataRec.substring(DataRec.indexOf("C")+1,DataRec.indexOf("D"));
+    String dev1 = DataRec.substring(DataRec.indexOf("D")+1,DataRec.indexOf("$"));
+    String Temp = "Temperature : " + nhiet_do + " °C";
+    String Humi = "Humidity : " + do_am + " %";
+    String Rain = "Rainfall: " + mua;
+    dv1 = dev1.toInt();
+    String Dv1 = "State device 1: " + dev1;
+    tem = nhiet_do.toFloat();
+    hum = do_am.toFloat();
+    rain = mua.toFloat();
+    Serial.println(Temp); //truyền dữ liệu về raspi
+    Serial.println(Humi);
+    Serial.println(Rain);
+    Serial.println(Dv1);
+    if(currentMillis - preMillis >= interval) //cách 1 khoảng thời gian thì gửi dữ liệu lên google sheet
+    {
+      preMillis = currentMillis;
+      sendData(nhiet_do, do_am, mua); 
+    }
+   }
+   else
+     Serial.println("Erorr receive data from Arduino");
+   thing.handle();
+   delay(1000); //delay giữa mỗi lần lặp
+}
+//==============================================================================
+//============================================================================== void sendData
+// Subroutine for sending data to Google Sheets
+void sendData(String tem, String hum, String rain) //hàm gửi dữ liệu lên google sheet
+{
+  thing.stop();
+  Serial.println("==========");
+  Serial.print("connecting to ");
+  Serial.println(host);
+  
+  //----------------------------------------Connect to Google host
+  if (!client.connect(host, httpsPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+  //----------------------------------------
+
+  //----------------------------------------Processing data and sending data
+  String string_temperature =  String(tem);
+  // String string_temperature =  String(tem, DEC); 
+  String string_humidity =  String(hum); 
+  String string_rain = String (rain);
+  String url = "/macros/s/" + GAS_ID + "/exec?temperature=" + string_temperature + "&humidity=" + string_humidity + "&rain=" + string_rain;
+  Serial.print("requesting URL: ");
+  Serial.println(url);
+
+  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+         "Host: " + host + "\r\n" +
+         "User-Agent: BuildFailureDetectorESP8266\r\n" +
+         "Connection: close\r\n\r\n");
+
+  Serial.println("request sent");
+  //----------------------------------------
+
+  //----------------------------------------Checking whether the data was sent successfully or not
+  while (client.connected()) {
+    String line = client.readStringUntil('\n');
+    if (line == "\r") {
+      Serial.println("headers received");
+      break;
+    }
+  }
+  String line = client.readStringUntil('\n');
+  if (line.startsWith("24d")) {
+    Serial.println("esp8266/Arduino CI successfull!");
+    digitalWrite(ON_Board_LED, HIGH);
+  } else {
+    Serial.println("esp8266/Arduino CI has failed");
+    digitalWrite(ON_Board_LED, LOW);
+  }
+  Serial.print("reply was : ");
+  Serial.println(line);
+  Serial.println("closing connection");
+  Serial.println("==========");
+  Serial.println();
+  client.stop();
+  //----------------------------------------
+} 
+
+void SendData() //gửi dữ liệu từ web về arduino
+{
+  if (digitalRead(state_relay)==LOW && pre_state == 1 || digitalRead(state_relay)==HIGH && pre_state == 0)
+  {
+    if (pre_state == 0)
+      pre_state = 1;
+    else
+      pre_state = 0;
+    if ((digitalRead(state_relay)==LOW && dv1 == 1)|| (digitalRead(state_relay)==HIGH && dv1 == 0))
+    {
+        Wire.beginTransmission(8); /* begin with device address 8 */
+        if (digitalRead(state_relay)==LOW && dv1 == 1)
+          DataSend = "0$";
+        else if (digitalRead(state_relay)==HIGH && dv1 == 0)
+          DataSend = "1$";
+        int DataSend_len = DataSend.length() + 1; 
+        char DataSend_array[DataSend_len];
+        DataSend.toCharArray(DataSend_array, DataSend_len);
+        for (int i=0;i<(DataSend_len-1);i++)
+        {
+          Wire.write(DataSend_array[i]);
+        }
+        Wire.endTransmission();
+    }
+  }
+}
+
+void RecData()
+{
+  Wire.requestFrom(8, 20); /* request & read data of size 13 from slave */
+  DataRec = "";
+  while (0 < Wire.available()) 
+  {
+    char c = Wire.read();      /* receive byte as a character */
+    DataRec = DataRec + c;          /* print the character */
+  }
+  Serial.println(DataRec);             /* to newline */
+}
+//==============================================================================

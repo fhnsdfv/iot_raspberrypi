@@ -1,0 +1,219 @@
+#include "DHT.h" //khai báo thư viện cảm biến dht
+#include <Wire.h> // thư viện kết nối với esp theo chuẩn i2c
+
+#define relay 8 //pin thiết bị
+#define DHTPIN 2 //pin cảm biến dht
+#define DHTTYPE DHT11 // loại cảm biến
+#define water_pin 3 //pin cảm biến lượng mưa
+#define red_pin A0 //pin led
+#define blue_pin A1
+#define green_pin A2
+#define blink_led 1000 //thời gian led nhấp nháy khi có lỗi
+#define button 9 //pin nút nhất
+
+DHT dht(DHTPIN, DHTTYPE); //khởi tạo cảm biến dht
+unsigned long t_led = 0; //khởi tạo biến global
+String DataSend = ""; 
+String DataRec = "";
+bool but_press = false;
+String inputString = "";
+bool stringComplete = false;
+long cur_time = 0;
+
+void setup() { //thiết lập ban đầu
+  Wire.begin(8);
+  Wire.onReceive(receiveEvent); //hàm truyền nhận dữ liệu theo chuẩn i2c
+  Wire.onRequest(requestEvent);
+  Serial.begin(115200);
+  pinMode(button, INPUT_PULLUP); // thiết lập điện trở kéo lên
+  pinMode(relay,OUTPUT); //thiết lập pin đầu ra
+  dht.begin();
+}
+
+void loop() 
+{
+  if (digitalRead(button)==LOW) #kiểm tra giá trị từ nút nhấn để điều khiển thiết bị
+  {
+    if (but_press==false)
+    {
+      if (digitalRead(relay)==HIGH)
+      {
+        digitalWrite(relay,LOW);
+      }
+      else
+      {
+        digitalWrite(relay,HIGH);
+      }
+    }
+    but_press=true;
+    delay(50);
+  }
+  if (digitalRead(button)==HIGH)
+  {
+    but_press = false;
+    delay(50);
+  }
+  float h = dht.readHumidity();
+  // Read temperature as Celsius (the default)
+  float t = dht.readTemperature();
+  // Read temperature as Fahrenheit (isFahrenheit = true)
+  float f = dht.readTemperature(true);
+  //Read data from sensor water
+  int w = f_sen_water(water_pin);
+  // Check if any reads failed and exit early (to try again).
+  if ((isnan(h) || isnan(t) || isnan(f)) && w < 0) //lỗi khi đọc dữ liệu từ cảm biến
+  {
+    led_rgb(12);
+    
+    DataSend = String("A-1.0B-1.0C-1") + 'D' + String(digitalRead(relay)) + '$';
+  }
+  else if (w < 0)
+  {
+    led_rgb(1);
+    DataSend = 'A' + String(t) + 'B' + String(h) + String("C-1") + 'D' + String(digitalRead(relay)) + '$';
+  }
+  else if (isnan(h) || isnan(t) || isnan(f))
+  {
+    led_rgb(2);
+    DataSend = "A-1.0B-1.0C" + String(w) + 'D' + String(digitalRead(relay)) + '$';
+  }
+  else
+  {
+    led_rgb(0);
+    DataSend = 'A' + String(t) + 'B' + String(h) + 'C' + String(w) + 'D' + String(digitalRead(relay)) + '$';
+  }
+  if ((millis()-cur_time)>500)
+  {
+    cur_time = millis();
+    Serial.println(DataSend);
+  }
+  if (stringComplete)
+  {
+    Serial.println(inputString);
+    if (inputString.startsWith("0$"))
+      digitalWrite(relay,LOW);
+    else if (inputString.startsWith("1$"))
+      digitalWrite(relay,HIGH);
+    inputString="";
+    stringComplete=false;
+  }
+  delay(50);
+}
+
+void receiveEvent(int howMany) //hàm nhận dữ liệu từ esp
+{
+  int DataSend_len = DataSend.length() + 1; 
+  char DataSend_array[DataSend_len];
+  DataSend.toCharArray(DataSend_array, DataSend_len);
+  for (int i=0;i<(DataSend_len-1);i++)
+  {
+    Wire.write(DataSend_array[i]);
+  }
+}
+
+
+
+void led_rgb(int stat) //hàm nháy led khi cảm biến bị lỗi
+{
+  switch(stat)
+  {
+    case 0:
+      analogWrite(red_pin,0);
+      analogWrite(blue_pin,0);
+      analogWrite(green_pin,255);
+      break;
+    case 1:
+      if ((millis() - t_led) >= blink_led)
+      {
+        if (analogRead(red_pin) > 0)
+        {
+          analogWrite(red_pin,0);
+          analogWrite(blue_pin,0);
+          analogWrite(green_pin,0);
+        }
+        else 
+        {
+          analogWrite(red_pin,255);
+          analogWrite(blue_pin,0);
+          analogWrite(green_pin,0);
+        }
+        t_led = millis();
+      }
+      break;
+    case 2:
+      if ((millis() - t_led) >= blink_led)
+      {
+        if (analogRead(blue_pin) > 0)
+        {
+          analogWrite(red_pin,0);
+          analogWrite(blue_pin,0);
+          analogWrite(green_pin,0);
+        }
+        else 
+        {
+          analogWrite(red_pin,0);
+          analogWrite(blue_pin,255);
+          analogWrite(green_pin,0);
+        }
+        t_led = millis();
+      }
+      break;
+    case 12:
+      if ((millis() - t_led) >= blink_led)
+      {
+        if (analogRead(red_pin) > 0 && analogRead(blue_pin)>0)
+        {
+          analogWrite(red_pin,0);
+          analogWrite(blue_pin,0);
+          analogWrite(green_pin,0);
+        }
+        else 
+        {
+          analogWrite(red_pin,255);
+          analogWrite(blue_pin,255);
+          analogWrite(green_pin,0);
+        }
+        t_led = millis();
+      }
+      break;
+  }
+}
+
+int f_sen_water(int pin) //kiểm tra xem cảm biến lượng mưa có được kết nối hay ko
+{
+  int a,b,c;
+  pinMode(pin,INPUT);
+  a=digitalRead(pin);
+  pinMode(pin,OUTPUT);
+  digitalWrite(pin,HIGH);
+  pinMode(pin,INPUT);
+  b=digitalRead(pin);
+  pinMode(pin,OUTPUT);
+  digitalWrite(pin,LOW);
+  pinMode(pin,INPUT);
+  c=digitalRead(pin);
+  if (a == 0 && b == 1 && c == 0)
+    return -1;
+  else if (a == 0 && b == 0 && c == 0)
+    return 0;
+  else if (a == 1 && b == 1 && c == 1)
+    return 1;
+  else if (a == 1 && b == 0 && c == 1)
+    return 1;
+  else
+    return -2;
+}
+
+void serialEvent() { //hàm nhận tín hiệu từ raspi
+  while (Serial.available()) {
+    // get the new byte:
+    char inChar = (char)Serial.read();
+    // add it to the inputString:
+    inputString += inChar;
+    // if the incoming character is a newline, set a flag so the main loop can
+    // do something about it:
+    if (inChar == '$') {
+      stringComplete = true;
+    }
+  }
+}
